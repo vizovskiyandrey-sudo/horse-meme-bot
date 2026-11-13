@@ -3,6 +3,7 @@ import io
 import random
 import asyncio
 import aiohttp
+import urllib.parse # <--- ДОБАВИЛ ДЛЯ ПЕРЕВОДЧИКА
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -20,7 +21,18 @@ dp = Dispatcher()
 
 TOMBA_PROMPT = """Ты — злой, агрессивный персонаж Тумба Юмба. Общайся матом, коротко (до 15 слов)."""
 HORSE_SCENARIOS = ["standing on a sunny beach", "running in a green field", "wearing sunglasses", "in a cyberpunk city", "eating hay in a barn"]
-RANDOM_CAPTIONS = ["нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", "охуеть", "лошара", "пиздец"]
+
+# ОГРОМНЫЙ СПИСОК ЕБАНИСТИЧЕСКИХ ПОДПИСЕЙ (50+ штук)
+RANDOM_CAPTIONS = [
+    "нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", 
+    "охуеть", "лошара", "пиздец", "че", "ок", "бетон", "хуета", "гойда", 
+    "саси", "жиза", "база", "кринж", "слэй", "чей", "иди нахуй", "не читал", 
+    "в рот топтал", "три рубля", "бля буду", "ну и хуй с ним", "похуй", 
+    "даун", "лох", "я устал", "дай денег", "слышь", "эщкере", "чмо", "соси",
+    "не пизди", "я в домике", "пиздато", "ебал", "рот", "коняка", "иго-го", 
+    "кобыла", "жеребец", "внедорожник", "педаль", "мясо", "хрю", "мяу", "гав", 
+    "кукареку", "чо", "блядь", "сука", "заебал", "конь", "жопа", "срака", "дурак"
+]
 
 class MemeGen(StatesGroup):
     waiting_for_prompt = State()
@@ -45,49 +57,40 @@ async def process_prompt(message: Message, state: FSMContext):
         prompt_text = random.choice(HORSE_SCENARIOS)
     await state.clear()
     
-    # 1. Сначала переводим и улучшаем промпт
+    # 1. Переводим запрос через Google Translate (без ключей)
     msg = await message.answer("⏳ Перевожу твой запрос на язык нейросетей...")
-    enhanced_prompt = await enhance_prompt(prompt_text)
+    english_prompt = await translate_text(prompt_text)
     
-    # Показываем пользователю, что мы поняли
-    await msg.edit_text(f"⏳ Ща нарисую: {enhanced_prompt}...")
+    # 2. Формируем финальный промпт
+    full_prompt = f"A high quality photo of a horse, {english_prompt}, vibrant colors, realistic, 8k, detailed"
     
-    # 2. Отправляем на генерацию
-    await generate_and_send(message, enhanced_prompt, msg)
+    # Показываем пользователю
+    await msg.edit_text(f"⏳ Ща нарисую: {full_prompt}...")
+    
+    # 3. Отправляем на генерацию
+    await generate_and_send(message, full_prompt, msg)
 
-async def enhance_prompt(user_text: str) -> str:
-    """Переводит русский текст в детальный английский промпт"""
-    if not OPENROUTER_API_KEY:
-        # Если ключа нет, просто делаем базовый промпт (надеемся на лучшее)
-        return f"A high quality photo of a horse, {user_text}, vibrant colors, realistic, 8k"
-        
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": "google/gemini-flash-1.5",
-        "messages": [
-            {"role": "system", "content": "You are an image prompt generator. Translate the user's Russian text into a highly detailed English prompt for generating a photorealistic image of a horse. Focus on the location and action. Return ONLY the English prompt, no extra text, no quotes."},
-            {"role": "user", "content": user_text}
-        ]
-    }
+async def translate_text(text: str) -> str:
+    """Переводит русский текст на английский через бесплатный Google Translate"""
+    encoded_text = urllib.parse.quote(text)
+    url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={encoded_text}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
+            async with session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    translated = data["choices"][0]["message"]["content"].strip()
-                    # Добавляем жесткие теги для качества
-                    return f"{translated}, high quality, vibrant colors, realistic, 8k, detailed"
-                else:
-                    return f"A high quality photo of a horse, {user_text}, vibrant colors, realistic, 8k"
-    except:
-        return f"A high quality photo of a horse, {user_text}, vibrant colors, realistic, 8k"
+                    # Вытаскиваем переведенный текст из ответа
+                    translated = "".join([item[0] for item in data[0] if item[0]])
+                    return translated
+    except Exception as e:
+        print(f"Translate error: {e}")
+    return text # Если перевод не удался, возвращаем оригинал
 
 async def fetch_image_from_apis(prompt: str):
     errors = []
     # 1. Pollinations
     try:
-        await asyncio.sleep(2) # Задержка для обхода лимитов
+        await asyncio.sleep(2)
         url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(1, 999999)}"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             async with session.get(url) as resp:
@@ -157,7 +160,7 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         builder.button(text="🎲 Сгенерить ещё", callback_data="make_meme")
         
         await message.answer_photo(photo, reply_markup=builder.as_markup())
-        await status_msg.delete() # Удаляем сообщение со статусом
+        await status_msg.delete()
         
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка обработки: {e}")
