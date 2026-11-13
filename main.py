@@ -45,74 +45,90 @@ async def process_prompt(message: Message, state: FSMContext):
         prompt_text = random.choice(HORSE_SCENARIOS)
     await state.clear()
     
-    # Жестко добавляем коня и просим качество
-    full_prompt = f"A high quality photo of a horse, {prompt_text}, vibrant colors, realistic, 8k, detailed"
-    await generate_and_send(message, full_prompt)
+    # 1. Сначала переводим и улучшаем промпт
+    msg = await message.answer("⏳ Перевожу твой запрос на язык нейросетей...")
+    enhanced_prompt = await enhance_prompt(prompt_text)
+    
+    # Показываем пользователю, что мы поняли
+    await msg.edit_text(f"⏳ Ща нарисую: {enhanced_prompt}...")
+    
+    # 2. Отправляем на генерацию
+    await generate_and_send(message, enhanced_prompt, msg)
+
+async def enhance_prompt(user_text: str) -> str:
+    """Переводит русский текст в детальный английский промпт"""
+    if not OPENROUTER_API_KEY:
+        # Если ключа нет, просто делаем базовый промпт (надеемся на лучшее)
+        return f"A high quality photo of a horse, {user_text}, vibrant colors, realistic, 8k"
+        
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "google/gemini-flash-1.5",
+        "messages": [
+            {"role": "system", "content": "You are an image prompt generator. Translate the user's Russian text into a highly detailed English prompt for generating a photorealistic image of a horse. Focus on the location and action. Return ONLY the English prompt, no extra text, no quotes."},
+            {"role": "user", "content": user_text}
+        ]
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    translated = data["choices"][0]["message"]["content"].strip()
+                    # Добавляем жесткие теги для качества
+                    return f"{translated}, high quality, vibrant colors, realistic, 8k, detailed"
+                else:
+                    return f"A high quality photo of a horse, {user_text}, vibrant colors, realistic, 8k"
+    except:
+        return f"A high quality photo of a horse, {user_text}, vibrant colors, realistic, 8k"
 
 async def fetch_image_from_apis(prompt: str):
-    """Пробует получить картинку из нескольких API по очереди"""
-    
-    # 1. Пытаем Pollinations (он быстрый, но иногда кидает 402)
+    errors = []
+    # 1. Pollinations
     try:
+        await asyncio.sleep(2) # Задержка для обхода лимитов
         url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(1, 999999)}"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    return await resp.read()
-    except Exception:
-        pass # Если не вышло, идем дальше
+                    return await resp.read(), None
+                else:
+                    errors.append(f"Pollinations: {resp.status}")
+    except Exception as e:
+        errors.append(f"Pollinations: {e}")
 
-    # 2. Пытаем Veida.ai (если Поллинация сдохла)
+    # 2. Hugging Face
     try:
-        gen_url = "https://veida.ai/api/ai/generate"
-        payload = {"prompt": prompt, "provider": "kie", "scene": "text-to-image"}
-        headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+        api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+        payload = {"inputs": prompt}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=50)) as session:
-            async with session.post(gen_url, json=payload, headers=headers) as resp:
+            async with session.post(api_url, json=payload) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    task_id = data.get("taskId")
-                    if task_id:
-                        for _ in range(15):
-                            await asyncio.sleep(2)
-                            async with session.get(f"https://veida.ai/api/ai/anon-query?taskId={task_id}", headers=headers) as q_resp:
-                                if q_resp.status == 200:
-                                    res = await q_resp.json()
-                                    if res.get("status") == "completed" and res.get("imageUrl"):
-                                        async with session.get(res["imageUrl"]) as img_resp:
-                                            if img_resp.status == 200:
-                                                return await img_resp.read()
-                                    elif res.get("status") == "failed":
-                                        break # Если он сдох, идем к третьему
-    except Exception:
-        pass
+                    return await resp.read(), None
+                else:
+                    errors.append(f"HuggingFace: {resp.status}")
+    except Exception as e:
+        errors.append(f"HuggingFace: {e}")
 
-    # 3. Аварийный вариант (если первые два сдохли)
-    try:
-        # Юзаем другой бесплатный сервис
-        url = f"https://api.airforce/imagine?prompt={prompt}"
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.read()
-    except Exception:
-        pass
+    error_msg = " | ".join(errors)
+    return None, error_msg
 
-    return None
-
-async def generate_and_send(message: Message, full_prompt: str):
-    msg = await message.answer("⏳ Ща нарисую, не пизди...")
-    
-    image_bytes = await fetch_image_from_apis(full_prompt)
+async def generate_and_send(message: Message, full_prompt: str, status_msg: Message):
+    image_bytes, error_msg = await fetch_image_from_apis(full_prompt)
 
     if not image_bytes:
-        await msg.edit_text("❌ Все сервера с картинками сдохли. Попробуй через минуту.")
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Попробовать снова (10с)", callback_data="retry_gen")
+        await status_msg.edit_text(
+            "❌ Все сервера с картинками сдохли. Попробуй через 10 секунд.",
+            reply_markup=builder.as_markup()
+        )
+        asyncio.create_task(update_timer(status_msg.message_id, message.chat.id))
         return
 
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        
-        # Обрезаем водяные знаки, если они есть (снизу 30 пикселей)
         img = img.crop((0, 0, img.width, img.height - 30))
         
         draw = ImageDraw.Draw(img)
@@ -141,10 +157,27 @@ async def generate_and_send(message: Message, full_prompt: str):
         builder.button(text="🎲 Сгенерить ещё", callback_data="make_meme")
         
         await message.answer_photo(photo, reply_markup=builder.as_markup())
-        await msg.delete()
+        await status_msg.delete() # Удаляем сообщение со статусом
         
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка обработки: {e}")
+        await status_msg.edit_text(f"❌ Ошибка обработки: {e}")
+
+async def update_timer(message_id: int, chat_id: int):
+    for seconds_left in range(9, 0, -1):
+        await asyncio.sleep(1)
+        builder = InlineKeyboardBuilder()
+        builder.button(text=f"🔄 Попробовать снова ({seconds_left}с)", callback_data="retry_gen")
+        try:
+            await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=builder.as_markup())
+        except:
+            pass
+
+@dp.callback_query(F.data == "retry_gen")
+async def retry_generation(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.edit_text("🔄 Пробую ещё раз...")
+    await callback.message.answer("Напиши запрос еще раз, бля.")
+    await state.set_state(MemeGen.waiting_for_prompt)
 
 async def get_tomba_comment(user_prompt: str) -> str:
     if not OPENROUTER_API_KEY: return random.choice(RANDOM_CAPTIONS)
