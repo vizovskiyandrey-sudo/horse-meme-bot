@@ -34,8 +34,11 @@ async def start(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "make_meme")
 async def ask_prompt(callback: CallbackQuery, state: FSMContext):
-    await callback.answer("Погнали, хули!") 
-    await callback.message.edit_text("Опиши, че конь делает. Или напиши 'рандом'.")
+    # Убрали всплывающий текст, просто моментально гасим кнопку
+    await callback.answer()
+    
+    # Отправляем НОВОЕ сообщение (не редактируем старое с картинкой!), как ты и просил
+    await callback.message.answer("да блять, давай загенерим, где сидеть ебучему коню?")
     await state.set_state(MemeGen.waiting_for_prompt)
 
 @dp.message(MemeGen.waiting_for_prompt)
@@ -44,11 +47,14 @@ async def process_prompt(message: Message, state: FSMContext):
     if prompt_text.lower() == 'рандом':
         prompt_text = random.choice(HORSE_SCENARIOS)
     await state.clear()
+    
     full_prompt = f"A high quality photo of a horse, {prompt_text}, vibrant colors, realistic, 8k, detailed"
     await generate_and_send(message, full_prompt)
 
 async def generate_and_send(message: Message, full_prompt: str):
+    # Это сообщение мы потом удалим, чтобы не засорять чат
     msg = await message.answer("⏳ Ща нарисую, не пизди...")
+    
     image_url = f"https://image.pollinations.ai/prompt/{full_prompt}?width=1024&height=1024&nologo=true&seed={random.randint(1, 999999)}"
 
     try:
@@ -89,8 +95,13 @@ async def generate_and_send(message: Message, full_prompt: str):
         photo = BufferedInputFile(output.read(), filename="horse_meme.jpg")
         builder = InlineKeyboardBuilder()
         builder.button(text="🎲 Сгенерить ещё", callback_data="make_meme")
+        
+        # Отправляем картинку с кнопкой
         await message.answer_photo(photo, reply_markup=builder.as_markup())
+        
+        # Удаляем сообщение "Ща нарисую", чтобы было чисто
         await msg.delete()
+        
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка обработки: {e}")
 
@@ -109,7 +120,6 @@ async def get_tomba_comment(user_prompt: str) -> str:
     except:
         return random.choice(RANDOM_CAPTIONS)
 
-# --- ЗАПУСК: LONG POLLING + ЗАГЛУШКА ВЕБ-СЕРВЕРА ---
 async def health_check(request):
     return web.Response(text="OK")
 
@@ -117,13 +127,10 @@ async def main():
     print("Бот запущен через Long Polling на фоне!")
     await bot.delete_webhook(drop_pending_updates=True)
     
-    # Запускаем бота в фоне
     asyncio.create_task(dp.start_polling(bot))
     
-    # Поднимаем фейковый веб-сервер, чтобы Render думал, что мы крутые и порт открыт
     app = web.Application()
     app.router.add_get('/', health_check)
-    app.router.add_get('/health', health_check)
     
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
@@ -131,9 +138,8 @@ async def main():
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     
-    # Держим сервер вечно включенным
     while True:
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
