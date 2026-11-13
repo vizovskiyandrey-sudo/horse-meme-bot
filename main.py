@@ -13,7 +13,6 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
-# Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_PATH = "/webhook"
@@ -22,21 +21,14 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# СПИСОК РАЗНЫХ СИТУАЦИЙ ДЛЯ КОНЯ (чтобы не были одинаковыми)
 HORSE_SCENARIOS = [
-    "standing on a sandy beach looking at the ocean",
-    "in a dark foggy forest staring at the camera",
-    "close-up portrait of a horse face",
-    "sitting like a human on a wooden chair",
-    "in a cyberpunk city at night, neon lights",
-    "running through a snowy field far away",
-    "eating hay in a dark barn",
-    "in a desert with pyramids in the background",
-    "looking through a window, sad mood",
-    "in a deep space nebula, astronaut helmet"
+    "standing on a sandy beach looking at the ocean", "in a dark foggy forest staring at the camera",
+    "close-up portrait of a horse face", "sitting like a human on a wooden chair",
+    "in a cyberpunk city at night, neon lights", "running through a snowy field far away",
+    "eating hay in a dark barn", "in a desert with pyramids in the background",
+    "looking through a window, sad mood", "in a deep space nebula, astronaut helmet"
 ]
 
-# СПИСОК ЕБАНИСТИЧЕСКИХ ПОДПИСЕЙ
 RANDOM_CAPTIONS = [
     "нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", 
     "охуеть", "лошара", "пиздец", "че", "ок", "бетон", "хуета", "гойда", 
@@ -66,11 +58,9 @@ async def ask_prompt(callback: CallbackQuery, state: FSMContext):
 @dp.message(MemeGen.waiting_for_prompt)
 async def process_prompt(message: Message, state: FSMContext):
     prompt_text = message.text.strip()
-    
     if prompt_text.lower() == 'рандом':
         prompt_text = random.choice(HORSE_SCENARIOS)
     else:
-        # Если юзер написал что-то сам, всё равно добавим рандомный фон/ракурс, чтобы не повторялось
         prompt_text = f"{prompt_text}, {random.choice(HORSE_SCENARIOS)}"
 
     full_prompt = f"{prompt_text}, low quality, dark lighting, 360p, shitpost style"
@@ -109,7 +99,7 @@ async def process_custom_caption(message: Message, state: FSMContext):
 async def generate_and_send(message: Message, prompt: str, caption: str):
     msg = await message.answer("⏳ Генерирую шакального коня, подожди...")
     
-    image_url = f"https://image.pollinations.ai/prompt/{prompt}?width=360&height=360&nologo=true&seed={random.randint(1, 999999)}" # Добавили seed, чтобы картинки 100% были разными!
+    image_url = f"https://image.pollinations.ai/prompt/{prompt}?width=360&height=360&nologo=true&seed={random.randint(1, 999999)}"
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -117,7 +107,7 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
                 if resp.status == 200:
                     image_bytes = await resp.read()
                 else:
-                    await msg.edit_text("❌ Ошибка генерации картинки.")
+                    await msg.edit_text("❌ Ошибка генерации картинки. Сервер прилег.")
                     return
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка сети: {e}")
@@ -126,12 +116,15 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
+        # ОБРЕЗАЕМ ВОДЯНОЙ ЗНАК СНИЗУ (оставляем 340 из 360 пикселей)
+        img = img.crop((0, 0, img.width, img.height - 20))
+        
         # ШАКАЛЬНАЯ ОБРАБОТКА
         img = ImageEnhance.Color(img).enhance(0.4)
         img = ImageEnhance.Brightness(img).enhance(0.7)
         img = ImageEnhance.Contrast(img).enhance(0.6)
         img = img.resize((180, 180), Image.Resampling.NEAREST)
-        img = img.resize((360, 360), Image.Resampling.NEAREST)
+        img = img.resize((360, 340), Image.Resampling.NEAREST)
 
         draw = ImageDraw.Draw(img)
         
@@ -147,11 +140,9 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
         x = (img.width - text_width) / 2
         y = img.height - text_height - 15
         
-        # Обводка
         for adj_x in range(-2, 3):
             for adj_y in range(-2, 3):
                 draw.text((x + adj_x, y + adj_y), caption, font=font, fill="black")
-        # Текст
         draw.text((x, y), caption, font=font, fill="white")
         
         output = io.BytesIO()
@@ -160,7 +151,6 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
         
         photo = BufferedInputFile(output.read(), filename="horse_meme.jpg")
         
-        # ДОБАВЛЯЕМ КНОПКИ ПОД КАРТИНКУ
         builder = InlineKeyboardBuilder()
         builder.button(text="🎲 Сгенерить ещё", callback_data="make_meme")
         builder.button(text="🔙 В меню", callback_data="back_to_menu")
@@ -169,6 +159,7 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
         await msg.delete()
         
     except Exception as e:
+        # Если Питон падает при обработке картинки, бот напишет об этом, а не умрет молча
         await msg.edit_text(f"❌ Ошибка обработки картинки: {e}")
 
 @dp.callback_query(F.data == "back_to_menu")
