@@ -3,6 +3,7 @@ import io
 import random
 import asyncio
 import aiohttp
+import base64
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -34,10 +35,7 @@ async def start(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "make_meme")
 async def ask_prompt(callback: CallbackQuery, state: FSMContext):
-    # Убрали всплывающий текст, просто моментально гасим кнопку
-    await callback.answer()
-    
-    # Отправляем НОВОЕ сообщение (не редактируем старое с картинкой!), как ты и просил
+    await callback.answer() # Мгновенно гасим кнопку
     await callback.message.answer("да блять, давай загенерим, где сидеть ебучему коню?")
     await state.set_state(MemeGen.waiting_for_prompt)
 
@@ -52,21 +50,37 @@ async def process_prompt(message: Message, state: FSMContext):
     await generate_and_send(message, full_prompt)
 
 async def generate_and_send(message: Message, full_prompt: str):
-    # Это сообщение мы потом удалим, чтобы не засорять чат
     msg = await message.answer("⏳ Ща нарисую, не пизди...")
     
-    image_url = f"https://image.pollinations.ai/prompt/{full_prompt}?width=1024&height=1024&nologo=true&seed={random.randint(1, 999999)}"
+    # Юзаем Nexra API вместо Pollinations
+    url = "https://api.nexra.aryahcr.cc/api/image/generate"
+    payload = {"prompt": full_prompt, "model": "flux"}
+    
+    image_bytes = None
 
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=40)) as session:
-            async with session.get(image_url) as resp:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=50)) as session:
+            async with session.post(url, json=payload) as resp:
                 if resp.status == 200:
-                    image_bytes = await resp.read()
+                    data = await resp.json()
+                    if data.get("status") == 200 and data.get("data"):
+                        # Декодируем base64 картинку
+                        image_bytes = base64.b64decode(data["data"])
+                    else:
+                        await msg.edit_text(f"❌ Нейросеть вернула хуйню. Ответ: {data}")
+                        return
                 else:
                     await msg.edit_text(f"❌ Сервер картинок сдох. Код: {resp.status}")
                     return
+    except asyncio.TimeoutError:
+        await msg.edit_text("❌ Нейросеть затупила и не ответила за 50 секунд. Попробуй еще раз.")
+        return
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка сети: {e}")
+        return
+
+    if not image_bytes:
+        await msg.edit_text("❌ Картинка не пришла. Попробуй еще раз.")
         return
 
     try:
@@ -96,10 +110,7 @@ async def generate_and_send(message: Message, full_prompt: str):
         builder = InlineKeyboardBuilder()
         builder.button(text="🎲 Сгенерить ещё", callback_data="make_meme")
         
-        # Отправляем картинку с кнопкой
         await message.answer_photo(photo, reply_markup=builder.as_markup())
-        
-        # Удаляем сообщение "Ща нарисую", чтобы было чисто
         await msg.delete()
         
     except Exception as e:
@@ -142,4 +153,4 @@ async def main():
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main())  # <--- ТУТ ИСПРАВЛЕНО!
