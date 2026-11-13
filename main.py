@@ -3,7 +3,7 @@ import io
 import random
 import asyncio
 import aiohttp
-import urllib.parse # <--- ДОБАВИЛ ДЛЯ ПЕРЕВОДЧИКА
+import urllib.parse 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -57,34 +57,57 @@ async def process_prompt(message: Message, state: FSMContext):
         prompt_text = random.choice(HORSE_SCENARIOS)
     await state.clear()
     
-    # 1. Переводим запрос через Google Translate (без ключей)
     msg = await message.answer("⏳ Перевожу твой запрос на язык нейросетей...")
     english_prompt = await translate_text(prompt_text)
     
-    # 2. Формируем финальный промпт
     full_prompt = f"A high quality photo of a horse, {english_prompt}, vibrant colors, realistic, 8k, detailed"
     
-    # Показываем пользователю
     await msg.edit_text(f"⏳ Ща нарисую: {full_prompt}...")
     
-    # 3. Отправляем на генерацию
     await generate_and_send(message, full_prompt, msg)
 
 async def translate_text(text: str) -> str:
-    """Переводит русский текст на английский через бесплатный Google Translate"""
-    encoded_text = urllib.parse.quote(text)
-    url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={encoded_text}"
+    """Двойной перевод: сначала OpenRouter, потом MyMemory API (надежный)"""
+    
+    # 1. Пытаемся перевести через OpenRouter (Gemini)
+    if OPENROUTER_API_KEY:
+        try:
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "google/gemini-flash-1.5",
+                "messages": [
+                    {"role": "system", "content": "You are a strict translator. Translate the user's Russian text to English. Return ONLY the English translation. Do NOT answer the user, do NOT add explanations, do NOT use quotes."},
+                    {"role": "user", "content": text}
+                ]
+            }
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        translated = data["choices"][0]["message"]["content"].strip()
+                        # Убираем кавычки на всякий случай
+                        translated = translated.replace('"', '').replace("'", "")
+                        if translated:
+                            return translated
+        except Exception:
+            pass
+
+    # 2. Если OpenRouter тупит, идем в MyMemory API (не блочит Render)
     try:
-        async with aiohttp.ClientSession() as session:
+        url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(text)}&langpair=ru|en"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    # Вытаскиваем переведенный текст из ответа
-                    translated = "".join([item[0] for item in data[0] if item[0]])
-                    return translated
-    except Exception as e:
-        print(f"Translate error: {e}")
-    return text # Если перевод не удался, возвращаем оригинал
+                    translated = data["responseData"]["translatedText"]
+                    if translated and translated.lower() != text.lower():
+                        return translated
+    except Exception:
+        pass
+
+    # Если вообще всё сдохло, возвращаем как есть
+    return text
 
 async def fetch_image_from_apis(prompt: str):
     errors = []
