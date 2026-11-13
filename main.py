@@ -45,75 +45,76 @@ async def process_prompt(message: Message, state: FSMContext):
         prompt_text = random.choice(HORSE_SCENARIOS)
     await state.clear()
     
+    # Жестко добавляем коня и просим качество
     full_prompt = f"A high quality photo of a horse, {prompt_text}, vibrant colors, realistic, 8k, detailed"
     await generate_and_send(message, full_prompt)
+
+async def fetch_image_from_apis(prompt: str):
+    """Пробует получить картинку из нескольких API по очереди"""
+    
+    # 1. Пытаем Pollinations (он быстрый, но иногда кидает 402)
+    try:
+        url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(1, 999999)}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+    except Exception:
+        pass # Если не вышло, идем дальше
+
+    # 2. Пытаем Veida.ai (если Поллинация сдохла)
+    try:
+        gen_url = "https://veida.ai/api/ai/generate"
+        payload = {"prompt": prompt, "provider": "kie", "scene": "text-to-image"}
+        headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=50)) as session:
+            async with session.post(gen_url, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    task_id = data.get("taskId")
+                    if task_id:
+                        for _ in range(15):
+                            await asyncio.sleep(2)
+                            async with session.get(f"https://veida.ai/api/ai/anon-query?taskId={task_id}", headers=headers) as q_resp:
+                                if q_resp.status == 200:
+                                    res = await q_resp.json()
+                                    if res.get("status") == "completed" and res.get("imageUrl"):
+                                        async with session.get(res["imageUrl"]) as img_resp:
+                                            if img_resp.status == 200:
+                                                return await img_resp.read()
+                                    elif res.get("status") == "failed":
+                                        break # Если он сдох, идем к третьему
+    except Exception:
+        pass
+
+    # 3. Аварийный вариант (если первые два сдохли)
+    try:
+        # Юзаем другой бесплатный сервис
+        url = f"https://api.airforce/imagine?prompt={prompt}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+    except Exception:
+        pass
+
+    return None
 
 async def generate_and_send(message: Message, full_prompt: str):
     msg = await message.answer("⏳ Ща нарисую, не пизди...")
     
-    # --- ГЕНЕРАЦИЯ ЧЕРЕЗ VEIDA.AI ---
-    generate_url = "https://veida.ai/api/ai/generate"
-    payload = {
-        "prompt": full_prompt,
-        "provider": "kie",
-        "scene": "text-to-image"
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-
-    image_bytes = None
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-            # 1. Отправляем запрос на генерацию
-            async with session.post(generate_url, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    await msg.edit_text(f"❌ Сервер генерации не принял запрос. Код: {resp.status}")
-                    return
-                data = await resp.json()
-                task_id = data.get("taskId")
-                if not task_id:
-                    await msg.edit_text(f"❌ Сервер не вернул ID задачи. Ответ: {data}")
-                    return
-
-            # 2. Опрашиваем сервер, пока картинка не будет готова
-            query_url = f"https://veida.ai/api/ai/anon-query?taskId={task_id}"
-            for _ in range(20): # Максимум 20 попыток (около 40 секунд)
-                await asyncio.sleep(2) # Ждем 2 секунды перед каждой проверкой
-                async with session.get(query_url, headers=headers) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        status = result.get("status")
-                        if status == "completed" and result.get("imageUrl"):
-                            # 3. Скачиваем готовую картинку
-                            img_url = result["imageUrl"]
-                            async with session.get(img_url) as img_resp:
-                                if img_resp.status == 200:
-                                    image_bytes = await img_resp.read()
-                                    break # Выходим из цикла, картинка у нас
-                        elif status == "failed":
-                            await msg.edit_text("❌ Нейросеть не смогла нарисовать. Попробуй другой промпт.")
-                            return
-            else:
-                # Если цикл завершился, а картинки нет
-                await msg.edit_text("❌ Нейросеть слишком долго думает. Попробуй еще раз.")
-                return
-
-    except asyncio.TimeoutError:
-        await msg.edit_text("❌ Сервер генерации завис. Попробуй еще раз.")
-        return
-    except Exception as e:
-        await msg.edit_text(f"❌ Ошибка сети: {e}")
-        return
+    image_bytes = await fetch_image_from_apis(full_prompt)
 
     if not image_bytes:
-        await msg.edit_text("❌ Картинка не пришла. Попробуй еще раз.")
+        await msg.edit_text("❌ Все сервера с картинками сдохли. Попробуй через минуту.")
         return
 
-    # --- ДАЛЬШЕ ИДЕТ НАКЛАДЫВАНИЕ ТЕКСТА (БЕЗ ИЗМЕНЕНИЙ) ---
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        
+        # Обрезаем водяные знаки, если они есть (снизу 30 пикселей)
+        img = img.crop((0, 0, img.width, img.height - 30))
+        
         draw = ImageDraw.Draw(img)
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
@@ -164,9 +165,8 @@ async def health_check(request):
     return web.Response(text="OK")
 
 async def main():
-    print("Бот запущен через Long Polling на фоне!")
+    print("Бот запущен!")
     await bot.delete_webhook(drop_pending_updates=True)
-    
     asyncio.create_task(dp.start_polling(bot))
     
     app = web.Application()
