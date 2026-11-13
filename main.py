@@ -3,7 +3,6 @@ import io
 import random
 import asyncio
 import aiohttp
-import base64
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -35,7 +34,7 @@ async def start(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "make_meme")
 async def ask_prompt(callback: CallbackQuery, state: FSMContext):
-    await callback.answer() # Мгновенно гасим кнопку
+    await callback.answer()
     await callback.message.answer("да блять, давай загенерим, где сидеть ебучему коню?")
     await state.set_state(MemeGen.waiting_for_prompt)
 
@@ -52,28 +51,57 @@ async def process_prompt(message: Message, state: FSMContext):
 async def generate_and_send(message: Message, full_prompt: str):
     msg = await message.answer("⏳ Ща нарисую, не пизди...")
     
-    # Юзаем Nexra API вместо Pollinations
-    url = "https://api.nexra.aryahcr.cc/api/image/generate"
-    payload = {"prompt": full_prompt, "model": "flux"}
-    
-    image_bytes = None
+    # --- ГЕНЕРАЦИЯ ЧЕРЕЗ VEIDA.AI ---
+    generate_url = "https://veida.ai/api/ai/generate"
+    payload = {
+        "prompt": full_prompt,
+        "provider": "kie",
+        "scene": "text-to-image"
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
 
+    image_bytes = None
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=50)) as session:
-            async with session.post(url, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get("status") == 200 and data.get("data"):
-                        # Декодируем base64 картинку
-                        image_bytes = base64.b64decode(data["data"])
-                    else:
-                        await msg.edit_text(f"❌ Нейросеть вернула хуйню. Ответ: {data}")
-                        return
-                else:
-                    await msg.edit_text(f"❌ Сервер картинок сдох. Код: {resp.status}")
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+            # 1. Отправляем запрос на генерацию
+            async with session.post(generate_url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    await msg.edit_text(f"❌ Сервер генерации не принял запрос. Код: {resp.status}")
                     return
+                data = await resp.json()
+                task_id = data.get("taskId")
+                if not task_id:
+                    await msg.edit_text(f"❌ Сервер не вернул ID задачи. Ответ: {data}")
+                    return
+
+            # 2. Опрашиваем сервер, пока картинка не будет готова
+            query_url = f"https://veida.ai/api/ai/anon-query?taskId={task_id}"
+            for _ in range(20): # Максимум 20 попыток (около 40 секунд)
+                await asyncio.sleep(2) # Ждем 2 секунды перед каждой проверкой
+                async with session.get(query_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        status = result.get("status")
+                        if status == "completed" and result.get("imageUrl"):
+                            # 3. Скачиваем готовую картинку
+                            img_url = result["imageUrl"]
+                            async with session.get(img_url) as img_resp:
+                                if img_resp.status == 200:
+                                    image_bytes = await img_resp.read()
+                                    break # Выходим из цикла, картинка у нас
+                        elif status == "failed":
+                            await msg.edit_text("❌ Нейросеть не смогла нарисовать. Попробуй другой промпт.")
+                            return
+            else:
+                # Если цикл завершился, а картинки нет
+                await msg.edit_text("❌ Нейросеть слишком долго думает. Попробуй еще раз.")
+                return
+
     except asyncio.TimeoutError:
-        await msg.edit_text("❌ Нейросеть затупила и не ответила за 50 секунд. Попробуй еще раз.")
+        await msg.edit_text("❌ Сервер генерации завис. Попробуй еще раз.")
         return
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка сети: {e}")
@@ -83,6 +111,7 @@ async def generate_and_send(message: Message, full_prompt: str):
         await msg.edit_text("❌ Картинка не пришла. Попробуй еще раз.")
         return
 
+    # --- ДАЛЬШЕ ИДЕТ НАКЛАДЫВАНИЕ ТЕКСТА (БЕЗ ИЗМЕНЕНИЙ) ---
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         draw = ImageDraw.Draw(img)
@@ -153,4 +182,4 @@ async def main():
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(main())  # <--- ТУТ ИСПРАВЛЕНО!
+    asyncio.run(main())
