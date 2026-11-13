@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
+from aiohttp import web, ClientTimeout
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -102,13 +102,18 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
     image_url = f"https://image.pollinations.ai/prompt/{prompt}?width=360&height=360&nologo=true&seed={random.randint(1, 999999)}"
     
     try:
-        async with aiohttp.ClientSession() as session:
+        # Добавляем таймаут, чтобы бот не висел вечно, если сервер картинок тупит
+        timeout = ClientTimeout(total=40)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(image_url) as resp:
                 if resp.status == 200:
                     image_bytes = await resp.read()
                 else:
                     await msg.edit_text("❌ Ошибка генерации картинки. Сервер прилег.")
                     return
+    except asyncio.TimeoutError:
+        await msg.edit_text("❌ Нейросеть затупила. Попробуй еще раз.")
+        return
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка сети: {e}")
         return
@@ -116,10 +121,9 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
-        # ОБРЕЗАЕМ ВОДЯНОЙ ЗНАК СНИЗУ (оставляем 340 из 360 пикселей)
+        # ОБРЕЗАЕМ ВОДЯНОЙ ЗНАК СНИЗУ
         img = img.crop((0, 0, img.width, img.height - 20))
         
-        # ШАКАЛЬНАЯ ОБРАБОТКА
         img = ImageEnhance.Color(img).enhance(0.4)
         img = ImageEnhance.Brightness(img).enhance(0.7)
         img = ImageEnhance.Contrast(img).enhance(0.6)
@@ -159,7 +163,6 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
         await msg.delete()
         
     except Exception as e:
-        # Если Питон падает при обработке картинки, бот напишет об этом, а не умрет молча
         await msg.edit_text(f"❌ Ошибка обработки картинки: {e}")
 
 @dp.callback_query(F.data == "back_to_menu")
@@ -172,14 +175,16 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
 
 # --- ЗАПУСК (RENDER) ---
 async def on_startup(bot: Bot):
-    await bot.set_webhook(WEBHOOK_URL)
+    # drop_pending_updates=True очищает всю очередь старых сообщений, чтобы бот не спамил
+    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
 
 async def on_shutdown(bot: Bot):
     await bot.delete_webhook()
 
 def main():
     app = web.Application()
-    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    # handle_in_background=True заставляет бота мгновенно отвечать Телеграму и не спамить
+    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot, handle_in_background=True)
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
     
