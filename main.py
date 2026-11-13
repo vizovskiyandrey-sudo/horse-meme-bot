@@ -9,6 +9,7 @@ from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiohttp import web
 from PIL import Image, ImageDraw, ImageFont
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -108,12 +109,31 @@ async def get_tomba_comment(user_prompt: str) -> str:
     except:
         return random.choice(RANDOM_CAPTIONS)
 
-# --- ЗАПУСК ЧЕРЕЗ LONG POLLING (БЕЗ ВЕБХУКОВ) ---
+# --- ЗАПУСК: LONG POLLING + ЗАГЛУШКА ВЕБ-СЕРВЕРА ---
+async def health_check(request):
+    return web.Response(text="OK")
+
 async def main():
-    print("Бот запущен через Long Polling!")
-    # Удаляем вебхук, чтобы он не мешал
+    print("Бот запущен через Long Polling на фоне!")
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    
+    # Запускаем бота в фоне
+    asyncio.create_task(dp.start_polling(bot))
+    
+    # Поднимаем фейковый веб-сервер, чтобы Render думал, что мы крутые и порт открыт
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    port = int(os.getenv("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
+    # Держим сервер вечно включенным
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
