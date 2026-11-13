@@ -13,7 +13,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
-# Переменные окружения (зададим на хостинге)
+# Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_PATH = "/webhook"
@@ -22,7 +22,21 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# РАСШИРЕННЫЙ СПИСОК ЕБАНИСТИЧЕСКИХ ПОДПИСЕЙ
+# СПИСОК РАЗНЫХ СИТУАЦИЙ ДЛЯ КОНЯ (чтобы не были одинаковыми)
+HORSE_SCENARIOS = [
+    "standing on a sandy beach looking at the ocean",
+    "in a dark foggy forest staring at the camera",
+    "close-up portrait of a horse face",
+    "sitting like a human on a wooden chair",
+    "in a cyberpunk city at night, neon lights",
+    "running through a snowy field far away",
+    "eating hay in a dark barn",
+    "in a desert with pyramids in the background",
+    "looking through a window, sad mood",
+    "in a deep space nebula, astronaut helmet"
+]
+
+# СПИСОК ЕБАНИСТИЧЕСКИХ ПОДПИСЕЙ
 RANDOM_CAPTIONS = [
     "нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", 
     "охуеть", "лошара", "пиздец", "че", "ок", "бетон", "хуета", "гойда", 
@@ -52,11 +66,14 @@ async def ask_prompt(callback: CallbackQuery, state: FSMContext):
 @dp.message(MemeGen.waiting_for_prompt)
 async def process_prompt(message: Message, state: FSMContext):
     prompt_text = message.text.strip()
-    if prompt_text.lower() == 'рандом':
-        prompt_text = "doing something random"
     
-    # Принудительно добавляем коня и шакальное качество
-    full_prompt = f"{prompt_text}, a horse, low quality, dark lighting, 360p, shitpost style"
+    if prompt_text.lower() == 'рандом':
+        prompt_text = random.choice(HORSE_SCENARIOS)
+    else:
+        # Если юзер написал что-то сам, всё равно добавим рандомный фон/ракурс, чтобы не повторялось
+        prompt_text = f"{prompt_text}, {random.choice(HORSE_SCENARIOS)}"
+
+    full_prompt = f"{prompt_text}, low quality, dark lighting, 360p, shitpost style"
     await state.update_data(prompt=full_prompt)
     
     builder = InlineKeyboardBuilder()
@@ -92,7 +109,7 @@ async def process_custom_caption(message: Message, state: FSMContext):
 async def generate_and_send(message: Message, prompt: str, caption: str):
     msg = await message.answer("⏳ Генерирую шакального коня, подожди...")
     
-    image_url = f"https://image.pollinations.ai/prompt/{prompt}?width=360&height=360&nologo=true"
+    image_url = f"https://image.pollinations.ai/prompt/{prompt}?width=360&height=360&nologo=true&seed={random.randint(1, 999999)}" # Добавили seed, чтобы картинки 100% были разными!
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -142,11 +159,25 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
         output.seek(0)
         
         photo = BufferedInputFile(output.read(), filename="horse_meme.jpg")
-        await message.answer_photo(photo)
+        
+        # ДОБАВЛЯЕМ КНОПКИ ПОД КАРТИНКУ
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🎲 Сгенерить ещё", callback_data="make_meme")
+        builder.button(text="🔙 В меню", callback_data="back_to_menu")
+        
+        await message.answer_photo(photo, reply_markup=builder.as_markup())
         await msg.delete()
         
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка обработки картинки: {e}")
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎨 Сделать коня", callback_data="make_meme")
+    await callback.message.edit_text("Главное меню:", reply_markup=builder.as_markup())
+    await callback.answer()
 
 # --- ЗАПУСК (RENDER) ---
 async def on_startup(bot: Bot):
