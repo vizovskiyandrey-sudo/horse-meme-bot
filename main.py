@@ -53,7 +53,7 @@ RANDOM_CAPTIONS = [
 class MemeGen(StatesGroup):
     waiting_for_prompt = State()
 
-# --- ФУНКЦИЯ ПОКАЗА МЕНЮШКИ (используется в двух местах) ---
+# --- ФУНКЦИЯ ПОКАЗА МЕНЮШКИ ---
 async def show_location_menu(message: Message, state: FSMContext):
     builder = InlineKeyboardBuilder()
     builder.button(text="🏠 Дома", callback_data="loc_дома")
@@ -78,6 +78,7 @@ async def show_location_menu(message: Message, state: FSMContext):
     builder.button(text="✍️ Свой вариант", callback_data="loc_custom")
     
     builder.adjust(2)
+    # ВАЖНО: Здесь message.answer, а не edit_text!
     await message.answer("Выбери локацию для коня (или напиши свой текст):", reply_markup=builder.as_markup())
     await state.set_state(MemeGen.waiting_for_prompt)
 
@@ -91,7 +92,7 @@ async def start(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "make_meme")
 async def ask_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await callback.message.edit_text("🎨 Погнали!")
+    # ВАЖНО: Убрали edit_text, который ломал бота при клике на картинку!
     await show_location_menu(callback.message, state)
 
 @dp.callback_query(F.data.startswith("loc_"))
@@ -183,7 +184,6 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         except:
             font = ImageFont.load_default()
         
-        # ЛОГИКА ОРЕШКОВ МАКАДАМЬЯ
         macadamia_locations = ["в лесу", "на траве", "на травке", "на поляне", "в туалете"]
         if original_prompt in macadamia_locations:
             pool = RANDOM_CAPTIONS + ["орешки макадамья", "орешки макадамья"]
@@ -227,7 +227,6 @@ async def update_timer(message_id: int, chat_id: int):
 async def retry_generation(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.edit_text("🔄 Окей, пробуем еще раз. Выбирай:")
-    # ТУТ ВЫЗЫВАЕТСЯ МЕНЮШКА ВМЕСТО ПРОСЬБЫ НАПИСАТЬ ТЕКСТ
     await show_location_menu(callback.message, state)
 
 async def get_tomba_comment(user_prompt: str) -> str:
