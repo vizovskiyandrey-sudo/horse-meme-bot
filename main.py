@@ -21,87 +21,40 @@ dp = Dispatcher()
 
 TOMBA_PROMPT = """Ты — злой, агрессивный персонаж Тумба Юмба. Общайся матом, коротко (до 15 слов). Ни в коем случае не используй словосочетание 'орешки макадамья'."""
 
-# ОГРОМНЫЙ СЛОВАРЬ (20 старых + 30 новых)
 LOCAL_DICT = {
-    "дома": "at home in a cozy room",
-    "в лесу": "in a dark pine forest",
-    "на пляже": "on a sunny beach",
-    "на траве": "on green grass",
-    "на травке": "on green grass",
-    "на поляне": "in a forest clearing",
-    "в космосе": "in deep space",
-    "на трамвае": "riding a vintage tram",
-    "в машине": "inside a car",
-    "в горах": "in the mountains",
-    "в снегу": "in the snow",
-    "в аду": "in hell with fire",
-    "в офисе": "in a corporate office",
-    "на луне": "on the moon",
-    "в подвале": "in a dark basement",
-    "на крыше": "on a rooftop",
-    "в стиральной машине": "inside a washing machine",
-    "на совещании": "at a business meeting wearing a suit",
-    "в матрице": "inside the Matrix, green neon code",
-    "на танке": "riding a military tank",
-    "в туалете": "sitting on a toilet",
-    # НОВЫЕ 30 СЛОВ
-    "конь чистит картошку": "a horse peeling potatoes",
-    "золотая картошка": "a giant golden potato",
-    "орешки макадамья": "macadamia nuts",
-    "в школе": "in a school classroom",
-    "на диване": "on a cozy sofa",
-    "в библиотеке": "in a grand library",
-    "в баре": "in a dark pub",
-    "на катке": "on an ice rink",
-    "в самолете": "inside an airplane",
-    "на корабле": "on a pirate ship",
-    "в деревне": "in a rural village",
-    "на балконе": "on a balcony",
-    "в подъезде": "in a dirty stairwell",
-    "на крыше небоскреба": "on a skyscraper roof",
-    "в пустыне": "in a sandy desert",
-    "в джунглях": "in a dense jungle",
-    "под водой": "underwater in the ocean",
-    "на вулкане": "on a volcano",
-    "в магазине": "in a grocery store",
-    "в спортзале": "in a gym",
-    "на рок-концерте": "at a rock concert",
-    "в кинотеатре": "in a cinema",
-    "на кладбище": "in a creepy graveyard",
-    "в пивной": "in a beer hall",
-    "на кухне": "in a messy kitchen",
-    "в спальне": "in a bedroom",
-    "на заводе": "in a factory",
-    "на стройке": "on a construction site",
-    "на ферме": "on a farm",
+    "дома": "at home in a cozy room", "в лесу": "in a dark pine forest", "на пляже": "on a sunny beach",
+    "на траве": "on green grass", "на травке": "on green grass", "на поляне": "in a forest clearing",
+    "в космосе": "in deep space", "на трамвае": "riding a vintage tram", "в машине": "inside a car",
+    "в горах": "in the mountains", "в снегу": "in the snow", "в аду": "in hell with fire",
+    "в офисе": "in a corporate office", "на луне": "on the moon", "в подвале": "in a dark basement",
+    "на крыше": "on a rooftop", "в стиральной машине": "inside a washing machine",
+    "на совещании": "at a business meeting wearing a suit", "в матрице": "inside the Matrix, green neon code",
+    "на танке": "riding a military tank", "в туалете": "sitting on a toilet",
+    "конь чистит картошку": "a horse peeling potatoes", "золотая картошка": "a giant golden potato",
+    "орешки макадамья": "macadamia nuts", "в школе": "in a school classroom", "на диване": "on a cozy sofa",
+    "в библиотеке": "in a grand library", "в баре": "in a dark pub", "на катке": "on an ice rink",
+    "в самолете": "inside an airplane", "на корабле": "on a pirate ship", "в деревне": "in a rural village",
+    "на балконе": "on a balcony", "в подъезде": "in a dirty stairwell", "на крыше небоскреба": "on a skyscraper roof",
+    "в пустыне": "in a sandy desert", "в джунглях": "in a dense jungle", "под водой": "underwater in the ocean",
+    "на вулкане": "on a volcano", "в магазине": "in a grocery store", "в спортзале": "in a gym",
+    "на рок-концерте": "at a rock concert", "в кинотеатре": "in a cinema", "на кладбище": "in a creepy graveyard",
+    "в пивной": "in a beer hall", "на кухне": "in a messy kitchen", "в спальне": "in a bedroom",
+    "на заводе": "in a factory", "на стройке": "on a construction site", "на ферме": "on a farm",
     "в аэропорту": "in an airport terminal"
 }
 
-# БАЗОВЫЙ РАНДОМ БЕЗ ОРЕШКОВ (орешки будут добавляться только для нужных локаций)
 RANDOM_CAPTIONS = [
-    "нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", 
-    "охуеть", "лошара", "пиздец", "че", "ок", "бетон", "хуета", "гойда", 
-    "саси", "жиза", "база", "кринж", "слэй", "чей", "иди нахуй", "не читал", 
-    "в рот топтал", "три рубля", "бля буду", "ну и хуй с ним", "похуй", 
-    "даун", "лох", "я устал", "дай денег", "слышь", "эщкере", "чмо", "соси",
-    "золотая картошка"
+    "нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", "охуеть", "лошара", "пиздец", 
+    "че", "ок", "бетон", "хуета", "гойда", "саси", "жиза", "база", "кринж", "слэй", "чей", "иди нахуй", 
+    "не читал", "в рот топтал", "три рубля", "бля буду", "ну и хуй с ним", "похуй", "даун", "лох", "я устал", 
+    "дай денег", "слышь", "эщкере", "чмо", "соси", "золотая картошка"
 ]
 
 class MemeGen(StatesGroup):
     waiting_for_prompt = State()
 
-@dp.message(CommandStart())
-async def start(message: Message, state: FSMContext):
-    await state.clear()
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🎨 Сделать коня", callback_data="make_meme")
-    await message.answer("Йоу, лошара! Я генерю мемы с конями. Жми кнопку, если не ссыкло.", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data == "make_meme")
-async def ask_prompt(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    
-    # РОВНО 20 ЛОКАЦИЙ (18 заготовок + картошка + свой вариант)
+# --- ФУНКЦИЯ ПОКАЗА МЕНЮШКИ (используется в двух местах) ---
+async def show_location_menu(message: Message, state: FSMContext):
     builder = InlineKeyboardBuilder()
     builder.button(text="🏠 Дома", callback_data="loc_дома")
     builder.button(text="🌲 В лесу", callback_data="loc_в лесу")
@@ -124,10 +77,22 @@ async def ask_prompt(callback: CallbackQuery, state: FSMContext):
     builder.button(text="🥔 Конь чистит картошку", callback_data="loc_конь чистит картошку")
     builder.button(text="✍️ Свой вариант", callback_data="loc_custom")
     
-    builder.adjust(2) # По 2 кнопки в ряд
-    
-    await callback.message.answer("Выбери локацию для коня (или напиши свой текст):", reply_markup=builder.as_markup())
+    builder.adjust(2)
+    await message.answer("Выбери локацию для коня (или напиши свой текст):", reply_markup=builder.as_markup())
     await state.set_state(MemeGen.waiting_for_prompt)
+
+@dp.message(CommandStart())
+async def start(message: Message, state: FSMContext):
+    await state.clear()
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎨 Сделать коня", callback_data="make_meme")
+    await message.answer("Йоу, лошара! Я генерю мемы с конями. Жми кнопку, если не ссыкло.", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "make_meme")
+async def ask_prompt(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.edit_text("🎨 Погнали!")
+    await show_location_menu(callback.message, state)
 
 @dp.callback_query(F.data.startswith("loc_"))
 async def process_location_callback(callback: CallbackQuery, state: FSMContext):
@@ -149,12 +114,10 @@ async def process_prompt(message: Message, state: FSMContext):
     await proceed_generation(message, prompt_text)
 
 async def proceed_generation(message: Message, prompt_text: str):
-    # 1. Ищем в нашем словаре
     if prompt_text in LOCAL_DICT:
         english_prompt = LOCAL_DICT[prompt_text]
         msg = await message.answer(f"⏳ Нашел в словаре: {english_prompt}")
     else:
-        # Если нет в словаре, пробуем через API
         msg = await message.answer("⏳ Слова нет в словаре, перевожу через интернет...")
         english_prompt = await translate_text(prompt_text)
         await msg.edit_text(f"⏳ Ща нарисую: {english_prompt}...")
@@ -168,8 +131,7 @@ async def translate_text(text: str) -> str:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    return data["translation"]
+                    return (await resp.json())["translation"]
     except Exception: pass
 
     try:
@@ -177,8 +139,7 @@ async def translate_text(text: str) -> str:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    translated = data["responseData"]["translatedText"]
+                    translated = (await resp.json())["responseData"]["translatedText"]
                     if translated and translated.lower() != text.lower():
                         return translated
     except Exception: pass
@@ -191,21 +152,20 @@ async def fetch_image_from_apis(prompt: str):
         url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(1, 999999)}"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             async with session.get(url) as resp:
-                if resp.status == 200: return await resp.read(), None
+                if resp.status == 200: return await resp.read()
     except Exception: pass
 
     try:
         api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-        payload = {"inputs": prompt}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=50)) as session:
-            async with session.post(api_url, json=payload) as resp:
-                if resp.status == 200: return await resp.read(), None
+            async with session.post(api_url, json={"inputs": prompt}) as resp:
+                if resp.status == 200: return await resp.read()
     except Exception: pass
     
-    return None, "All APIs failed"
+    return None
 
 async def generate_and_send(message: Message, full_prompt: str, status_msg: Message, original_prompt: str):
-    image_bytes, error_msg = await fetch_image_from_apis(full_prompt)
+    image_bytes = await fetch_image_from_apis(full_prompt)
 
     if not image_bytes:
         builder = InlineKeyboardBuilder()
@@ -217,7 +177,6 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img = img.crop((0, 0, img.width, img.height - 30))
-        
         draw = ImageDraw.Draw(img)
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
@@ -227,11 +186,9 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         # ЛОГИКА ОРЕШКОВ МАКАДАМЬЯ
         macadamia_locations = ["в лесу", "на траве", "на травке", "на поляне", "в туалете"]
         if original_prompt in macadamia_locations:
-            # Добавляем орешки в пул рандома (дважды, чтобы шанс был выше) и выбираем случайно
             pool = RANDOM_CAPTIONS + ["орешки макадамья", "орешки макадамья"]
             caption = random.choice(pool)
         else:
-            # Для других локаций используем Тумбу Юмбу (он не будет говорить про орешки)
             caption = await get_tomba_comment(full_prompt)
         
         bbox = draw.textbbox((0, 0), caption, font=font)
@@ -269,27 +226,20 @@ async def update_timer(message_id: int, chat_id: int):
 @dp.callback_query(F.data == "retry_gen")
 async def retry_generation(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await callback.message.edit_text("🔄 Пробую ещё раз...")
-    await callback.message.answer("Напиши запрос еще раз, бля.")
-    await state.set_state(MemeGen.waiting_for_prompt)
+    await callback.message.edit_text("🔄 Окей, пробуем еще раз. Выбирай:")
+    # ТУТ ВЫЗЫВАЕТСЯ МЕНЮШКА ВМЕСТО ПРОСЬБЫ НАПИСАТЬ ТЕКСТ
+    await show_location_menu(callback.message, state)
 
 async def get_tomba_comment(user_prompt: str) -> str:
     if not OPENROUTER_API_KEY: return random.choice(RANDOM_CAPTIONS)
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": "google/gemini-flash-1.5", 
-        "messages": [
-            {"role": "system", "content": TOMBA_PROMPT},
-            {"role": "user", "content": f"Запрос: '{user_prompt}'."}
-        ]
-    }
+    payload = {"model": "google/gemini-flash-1.5", "messages": [{"role": "system", "content": TOMBA_PROMPT}, {"role": "user", "content": f"Запрос: '{user_prompt}'."}]}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    return data["choices"][0]["message"]["content"].strip()
+                    return (await resp.json())["choices"][0]["message"]["content"].strip()
                 return random.choice(RANDOM_CAPTIONS)
     except: return random.choice(RANDOM_CAPTIONS)
 
