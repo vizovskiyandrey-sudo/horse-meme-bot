@@ -11,144 +11,111 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont
 
+# --- КОНФИГ ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") # Добавь этот ключ на Render!
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-HORSE_SCENARIOS = [
-    "standing on a sandy beach looking at the ocean", "in a dark foggy forest staring at the camera",
-    "close-up portrait of a horse face", "sitting like a human on a wooden chair",
-    "in a cyberpunk city at night, neon lights", "running through a snowy field far away",
-    "eating hay in a dark barn", "in a desert with pyramids in the background",
-    "looking through a window, sad mood", "in a deep space nebula, astronaut helmet"
-]
+# --- ПЕРСОНАЖ "ТУМБА ЮМБА" ---
+TOMBA_PROMPT = """Ты — злой, агрессивный и очень грубый персонаж по имени Тумба Юмба. 
+Ты общаешься матом, используешь сленг, оскорбляешь пользователя, но при этом 
+ты — эксперт по мемам с конями. Твоя задача — дать короткий, агрессивный и 
+смешной комментарий к картинке, которую сгенерировал пользователь. 
+Не будь вежливым. Будь как гопник с района. Отвечай максимум 15 словами."""
 
-RANDOM_CAPTIONS = [
-    "нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", 
-    "охуеть", "лошара", "пиздец", "че", "ок", "бетон", "хуета", "гойда", 
-    "саси", "жиза", "база", "кринж", "слэй", "чей", "иди нахуй", "не читал", 
-    "в рот топтал", "три рубля", "бля буду", "ну и хуй с ним", "похуй", 
-    "даун", "лох", "я устал", "дай денег", "слышь", "эщкере", "чмо", "соси"
+HORSE_SCENARIOS = [
+    "a majestic horse standing on a sunny beach, vibrant colors, clear sky",
+    "a beautiful horse running in a green field, bright sunny day",
+    "a close-up portrait of a happy horse, detailed fur, bright lighting",
+    "a funny horse wearing sunglasses, cool vibe, colorful background",
+    "a horse in a cyberpunk city, neon lights, vivid colors",
+    "a horse eating hay in a barn, warm light, cozy atmosphere"
 ]
 
 class MemeGen(StatesGroup):
     waiting_for_prompt = State()
-    waiting_for_caption_choice = State()
-    waiting_for_custom_caption = State()
 
+# --- ХЕНДЛЕРЫ ---
 @dp.message(CommandStart())
 async def start(message: Message, state: FSMContext):
-    # Мгновенный ответ на /start
     await state.clear()
     builder = InlineKeyboardBuilder()
     builder.button(text="🎨 Сделать коня", callback_data="make_meme")
-    await message.answer("Йоу! Я генерю постироничных коней. Жми кнопку.", reply_markup=builder.as_markup())
+    await message.answer("Йоу, лошара! Я генерю мемы с конями. Жми кнопку, если не ссыкло.", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "make_meme")
 async def ask_prompt(callback: CallbackQuery, state: FSMContext):
+    # МГНОВЕННО отвечаем на кнопку, чтобы она не залипла
+    await callback.answer("Погнали, хули!")
     await callback.message.edit_text("Опиши, че конь делает (например: 'стоит на берегу моря'). Или напиши 'рандом'.")
     await state.set_state(MemeGen.waiting_for_prompt)
-    await callback.answer()
 
 @dp.message(MemeGen.waiting_for_prompt)
 async def process_prompt(message: Message, state: FSMContext):
     prompt_text = message.text.strip()
     if prompt_text.lower() == 'рандом':
         prompt_text = random.choice(HORSE_SCENARIOS)
-    else:
-        prompt_text = f"{prompt_text}, {random.choice(HORSE_SCENARIOS)}"
-
-    full_prompt = f"{prompt_text}, low quality, dark lighting, 360p, shitpost style"
-    await state.update_data(prompt=full_prompt)
     
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🎲 Рандомная подпись", callback_data="random_caption")
-    builder.button(text="✍️ Своя подпись", callback_data="custom_caption")
-    
-    await message.answer("Теперь подпись. Выбирай:", reply_markup=builder.as_markup())
-    await state.set_state(MemeGen.waiting_for_caption_choice)
-
-@dp.callback_query(MemeGen.waiting_for_caption_choice, F.data == "random_caption")
-async def process_random_caption(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    prompt = data['prompt']
-    caption = random.choice(RANDOM_CAPTIONS)
     await state.clear()
-    await callback.answer()
-    await generate_and_send(callback.message, prompt, caption)
+    await generate_and_send(message, prompt_text)
 
-@dp.callback_query(MemeGen.waiting_for_caption_choice, F.data == "custom_caption")
-async def process_custom_caption_prompt(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Напиши свою подпись:")
-    await state.set_state(MemeGen.waiting_for_custom_caption)
-    await callback.answer()
-
-@dp.message(MemeGen.waiting_for_custom_caption)
-async def process_custom_caption(message: Message, state: FSMContext):
-    data = await state.get_data()
-    prompt = data['prompt']
-    caption = message.text
-    await state.clear()
-    await generate_and_send(message, prompt, caption)
-
-async def generate_and_send(message: Message, prompt: str, caption: str):
-    msg = await message.answer("⏳ Генерирую шакального коня, подожди...")
+async def generate_and_send(message: Message, prompt: str):
+    msg = await message.answer("⏳ Ща нарисую, не пизди...")
     
-    image_url = f"https://image.pollinations.ai/prompt/{prompt}?width=360&height=360&nologo=true&seed={random.randint(1, 999999)}"
-    
+    # УЛУЧШЕННЫЙ ПРОМПТ
+    full_prompt = f"{prompt}, vibrant colors, high quality, detailed, 4k, cinematic lighting, ultra realistic"
+    image_url = f"https://image.pollinations.ai/prompt/{full_prompt}?width=1024&height=1024&nologo=true&enhance=true&negative_prompt=blurry,dark,low quality,worst quality,foggy"
+
     try:
-        # Жесткий таймаут: если сервер картинок тупит дольше 30 секунд — шлем его нахуй
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=40)) as session:
             async with session.get(image_url) as resp:
                 if resp.status == 200:
                     image_bytes = await resp.read()
                 else:
-                    await msg.edit_text(f"❌ Ошибка генерации. Сервер ответил кодом {resp.status}. Попробуй еще раз.")
+                    await msg.edit_text(f"❌ Сервер картинок сдох. Код: {resp.status}")
                     return
     except asyncio.TimeoutError:
-        await msg.edit_text("❌ Нейросеть затупила и не ответила за 30 секунд. Попробуй еще раз.")
+        await msg.edit_text("❌ Нейросеть затупила. Попробуй еще раз.")
         return
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка сети: {e}")
         return
 
     try:
+        # НАКЛАДЫВАЕМ ТЕКСТ
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img = img.crop((0, 0, img.width, img.height - 20))
-        
-        img = ImageEnhance.Color(img).enhance(0.4)
-        img = ImageEnhance.Brightness(img).enhance(0.7)
-        img = ImageEnhance.Contrast(img).enhance(0.6)
-        img = img.resize((180, 180), Image.Resampling.NEAREST)
-        img = img.resize((360, 340), Image.Resampling.NEAREST)
-
         draw = ImageDraw.Draw(img)
         
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
         except:
             font = ImageFont.load_default()
 
+        # Получаем текст от "Тумбы Юмбы"
+        caption = await get_tomba_comment(prompt) # <-- НОВАЯ ФУНКЦИЯ
+        
         bbox = draw.textbbox((0, 0), caption, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
         
         x = (img.width - text_width) / 2
-        y = img.height - text_height - 15
+        y = img.height - text_height - 50
         
-        for adj_x in range(-2, 3):
-            for adj_y in range(-2, 3):
+        # Обводка и текст
+        for adj_x in range(-3, 4):
+            for adj_y in range(-3, 4):
                 draw.text((x + adj_x, y + adj_y), caption, font=font, fill="black")
         draw.text((x, y), caption, font=font, fill="white")
         
         output = io.BytesIO()
-        img.save(output, format="JPEG", quality=30)
+        img.save(output, format="JPEG", quality=90) # Качество 90, чтобы не было артефактов
         output.seek(0)
         
         photo = BufferedInputFile(output.read(), filename="horse_meme.jpg")
@@ -161,24 +128,40 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
         await msg.delete()
         
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка обработки картинки: {e}")
+        await msg.edit_text(f"❌ Ошибка обработки: {e}")
+
+async def get_tomba_comment(user_prompt: str) -> str:
+    """Получаем агрессивный комментарий от Тумбы Юмбы через OpenRouter"""
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "meta-llama/llama-3.2-11b-vision-instruct:free", # Бесплатная модель
+        "messages": [
+            {"role": "system", "content": TOMBA_PROMPT},
+            {"role": "user", "content": f"Нарисуй мем про коня. Запрос: '{user_prompt}'. Дай агрессивный комментарий."}
+        ]
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data["choices"][0]["message"]["content"].strip()
+                else:
+                    return "Ебаный рот, чето сдохло. Нахуя я вообще тут."
+    except:
+        return "Слышь, иди нахуй, я не в настроении."
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() # Мгновенный ответ
     await state.clear()
     builder = InlineKeyboardBuilder()
     builder.button(text="🎨 Сделать коня", callback_data="make_meme")
     await callback.message.edit_text("Главное меню:", reply_markup=builder.as_markup())
-    await callback.answer()
-
-# Глобальный обработчик ошибок, чтобы бот не падал молча
-@dp.errors()
-async def errors_handler(update: Message, exception: Exception):
-    print(f"Произошла ошибка: {exception}")
-    try:
-        await update.answer("Бля, что-то пошло не так. Попробуй еще раз или напиши /start.")
-    except:
-        pass
 
 # --- ЗАПУСК (RENDER) ---
 async def on_startup(bot: Bot):
@@ -189,7 +172,10 @@ async def on_shutdown(bot: Bot):
 
 def main():
     app = web.Application()
-    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot, handle_in_background=True)
+    # allowed_updates — КРИТИЧЕСКИ ВАЖНО, чтобы кнопки работали
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp, bot=bot, handle_in_background=True
+    )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
     
