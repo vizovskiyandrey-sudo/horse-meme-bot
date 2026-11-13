@@ -22,7 +22,6 @@ dp = Dispatcher()
 TOMBA_PROMPT = """Ты — злой, агрессивный персонаж Тумба Юмба. Общайся матом, коротко (до 15 слов)."""
 HORSE_SCENARIOS = ["standing on a sunny beach", "running in a green field", "wearing sunglasses", "in a cyberpunk city", "eating hay in a barn"]
 
-# ОГРОМНЫЙ СПИСОК ЕБАНИСТИЧЕСКИХ ПОДПИСЕЙ (50+ штук)
 RANDOM_CAPTIONS = [
     "нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", 
     "охуеть", "лошара", "пиздец", "че", "ок", "бетон", "хуета", "гойда", 
@@ -67,36 +66,23 @@ async def process_prompt(message: Message, state: FSMContext):
     await generate_and_send(message, full_prompt, msg)
 
 async def translate_text(text: str) -> str:
-    """Двойной перевод: сначала OpenRouter, потом MyMemory API (надежный)"""
+    """Перевод через 3 разных сервиса с жесткими таймаутами"""
     
-    # 1. Пытаемся перевести через OpenRouter (Gemini)
-    if OPENROUTER_API_KEY:
-        try:
-            url = "https://openrouter.ai/api/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "google/gemini-flash-1.5",
-                "messages": [
-                    {"role": "system", "content": "You are a strict translator. Translate the user's Russian text to English. Return ONLY the English translation. Do NOT answer the user, do NOT add explanations, do NOT use quotes."},
-                    {"role": "user", "content": text}
-                ]
-            }
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        translated = data["choices"][0]["message"]["content"].strip()
-                        # Убираем кавычки на всякий случай
-                        translated = translated.replace('"', '').replace("'", "")
-                        if translated:
-                            return translated
-        except Exception:
-            pass
+    # 1. Lingva Translate (лучший вариант для серверов)
+    try:
+        url = f"https://lingva.ml/api/v1/ru/en/{urllib.parse.quote(text)}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data["translation"]
+    except Exception:
+        pass
 
-    # 2. Если OpenRouter тупит, идем в MyMemory API (не блочит Render)
+    # 2. MyMemory (если Lingva сдох)
     try:
         url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(text)}&langpair=ru|en"
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -106,7 +92,27 @@ async def translate_text(text: str) -> str:
     except Exception:
         pass
 
-    # Если вообще всё сдохло, возвращаем как есть
+    # 3. OpenRouter (если совсем всё плохо)
+    if OPENROUTER_API_KEY:
+        try:
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "google/gemini-flash-1.5",
+                "messages": [
+                    {"role": "system", "content": "Translate to English. Return ONLY the translation."},
+                    {"role": "user", "content": text}
+                ]
+            }
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data["choices"][0]["message"]["content"].strip().replace('"', '')
+        except Exception:
+            pass
+
+    # Если все сдохли, возвращаем оригинал (но этого быть не должно)
     return text
 
 async def fetch_image_from_apis(prompt: str):
