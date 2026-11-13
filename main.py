@@ -4,6 +4,7 @@ import random
 import asyncio
 import aiohttp
 import urllib.parse 
+from datetime import datetime, timedelta # ДОБАВИЛ ДЛЯ ТАЙМЕРА
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -53,7 +54,6 @@ RANDOM_CAPTIONS = [
 class MemeGen(StatesGroup):
     waiting_for_prompt = State()
 
-# --- ФУНКЦИЯ ПОКАЗА МЕНЮШКИ ---
 async def show_location_menu(message: Message, state: FSMContext):
     builder = InlineKeyboardBuilder()
     builder.button(text="🏠 Дома", callback_data="loc_дома")
@@ -78,7 +78,6 @@ async def show_location_menu(message: Message, state: FSMContext):
     builder.button(text="✍️ Свой вариант", callback_data="loc_custom")
     
     builder.adjust(2)
-    # ВАЖНО: Здесь message.answer, а не edit_text!
     await message.answer("Выбери локацию для коня (или напиши свой текст):", reply_markup=builder.as_markup())
     await state.set_state(MemeGen.waiting_for_prompt)
 
@@ -92,7 +91,6 @@ async def start(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "make_meme")
 async def ask_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    # ВАЖНО: Убрали edit_text, который ломал бота при клике на картинку!
     await show_location_menu(callback.message, state)
 
 @dp.callback_query(F.data.startswith("loc_"))
@@ -106,15 +104,15 @@ async def process_location_callback(callback: CallbackQuery, state: FSMContext):
         
     await state.clear()
     await callback.message.edit_text(f"Выбрано: {loc_key}")
-    await proceed_generation(callback.message, loc_key)
+    await proceed_generation(callback.message, loc_key, state) # ПЕРЕДАЕМ STATE
 
 @dp.message(MemeGen.waiting_for_prompt)
 async def process_prompt(message: Message, state: FSMContext):
     prompt_text = message.text.strip().lower()
     await state.clear()
-    await proceed_generation(message, prompt_text)
+    await proceed_generation(message, prompt_text, state) # ПЕРЕДАЕМ STATE
 
-async def proceed_generation(message: Message, prompt_text: str):
+async def proceed_generation(message: Message, prompt_text: str, state: FSMContext):
     if prompt_text in LOCAL_DICT:
         english_prompt = LOCAL_DICT[prompt_text]
         msg = await message.answer(f"⏳ Нашел в словаре: {english_prompt}")
@@ -124,7 +122,7 @@ async def proceed_generation(message: Message, prompt_text: str):
         await msg.edit_text(f"⏳ Ща нарисую: {english_prompt}...")
     
     full_prompt = f"A high quality photo of a horse, {english_prompt}, vibrant colors, realistic, 8k, detailed"
-    await generate_and_send(message, full_prompt, msg, prompt_text)
+    await generate_and_send(message, full_prompt, msg, prompt_text, state) # ПЕРЕДАЕМ STATE
 
 async def translate_text(text: str) -> str:
     try:
@@ -148,27 +146,39 @@ async def translate_text(text: str) -> str:
     return text 
 
 async def fetch_image_from_apis(prompt: str):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
     try:
-        await asyncio.sleep(2)
         url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(1, 999999)}"
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            async with session.get(url) as resp:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200: return await resp.read()
+    except Exception: pass
+
+    try:
+        url = f"https://api.airforce/imagine?prompt={urllib.parse.quote(prompt)}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status == 200: return await resp.read()
     except Exception: pass
 
     try:
         api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=50)) as session:
-            async with session.post(api_url, json={"inputs": prompt}) as resp:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.post(api_url, json={"inputs": prompt}, headers=headers) as resp:
                 if resp.status == 200: return await resp.read()
     except Exception: pass
     
     return None
 
-async def generate_and_send(message: Message, full_prompt: str, status_msg: Message, original_prompt: str):
+async def generate_and_send(message: Message, full_prompt: str, status_msg: Message, original_prompt: str, state: FSMContext):
     image_bytes = await fetch_image_from_apis(full_prompt)
 
     if not image_bytes:
+        # ЗАПИСЫВАЕМ ВРЕМЯ, КОГДА ЗАКОНЧИТСЯ ТАЙМЕР
+        retry_time = datetime.now() + timedelta(seconds=10)
+        await state.update_data(retry_at=retry_time.timestamp())
+        
         builder = InlineKeyboardBuilder()
         builder.button(text="🔄 Попробовать снова (10с)", callback_data="retry_gen")
         await status_msg.edit_text("❌ Все сервера с картинками сдохли. Попробуй через 10 секунд.", reply_markup=builder.as_markup())
@@ -210,6 +220,7 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         
         await message.answer_photo(photo, reply_markup=builder.as_markup())
         await status_msg.delete()
+        await state.clear() # Очищаем таймер при успехе
         
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка обработки: {e}")
@@ -225,6 +236,17 @@ async def update_timer(message_id: int, chat_id: int):
 
 @dp.callback_query(F.data == "retry_gen")
 async def retry_generation(callback: CallbackQuery, state: FSMContext):
+    # ПРОВЕРКА ТАЙМЕРА
+    data = await state.get_data()
+    retry_at = data.get('retry_at', 0)
+    remaining = int(retry_at - datetime.now().timestamp())
+    
+    if remaining > 0:
+        await callback.answer()
+        # ТА САМАЯ ФРАЗА
+        await callback.message.answer(f"ПОДОЖДИ ПИДОРАС, НЕЙРОНКИ ЛЕЖАТ, ОТДЫХАЮТ. ВОЗВРАЩАЙСЯ ЧЕРЕЗ {remaining} СЕКУНД.")
+        return
+        
     await callback.answer()
     await callback.message.edit_text("🔄 Окей, пробуем еще раз. Выбирай:")
     await show_location_menu(callback.message, state)
