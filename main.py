@@ -1,8 +1,8 @@
 import os
 import io
 import random
-import aiohttp
 import asyncio
+import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web, ClientTimeout
+from aiohttp import web
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -44,6 +44,7 @@ class MemeGen(StatesGroup):
 
 @dp.message(CommandStart())
 async def start(message: Message, state: FSMContext):
+    # Мгновенный ответ на /start
     await state.clear()
     builder = InlineKeyboardBuilder()
     builder.button(text="🎨 Сделать коня", callback_data="make_meme")
@@ -102,17 +103,16 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
     image_url = f"https://image.pollinations.ai/prompt/{prompt}?width=360&height=360&nologo=true&seed={random.randint(1, 999999)}"
     
     try:
-        # Добавляем таймаут, чтобы бот не висел вечно, если сервер картинок тупит
-        timeout = ClientTimeout(total=40)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        # Жесткий таймаут: если сервер картинок тупит дольше 30 секунд — шлем его нахуй
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             async with session.get(image_url) as resp:
                 if resp.status == 200:
                     image_bytes = await resp.read()
                 else:
-                    await msg.edit_text("❌ Ошибка генерации картинки. Сервер прилег.")
+                    await msg.edit_text(f"❌ Ошибка генерации. Сервер ответил кодом {resp.status}. Попробуй еще раз.")
                     return
     except asyncio.TimeoutError:
-        await msg.edit_text("❌ Нейросеть затупила. Попробуй еще раз.")
+        await msg.edit_text("❌ Нейросеть затупила и не ответила за 30 секунд. Попробуй еще раз.")
         return
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка сети: {e}")
@@ -120,8 +120,6 @@ async def generate_and_send(message: Message, prompt: str, caption: str):
 
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        
-        # ОБРЕЗАЕМ ВОДЯНОЙ ЗНАК СНИЗУ
         img = img.crop((0, 0, img.width, img.height - 20))
         
         img = ImageEnhance.Color(img).enhance(0.4)
@@ -173,9 +171,17 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Главное меню:", reply_markup=builder.as_markup())
     await callback.answer()
 
+# Глобальный обработчик ошибок, чтобы бот не падал молча
+@dp.errors()
+async def errors_handler(update: Message, exception: Exception):
+    print(f"Произошла ошибка: {exception}")
+    try:
+        await update.answer("Бля, что-то пошло не так. Попробуй еще раз или напиши /start.")
+    except:
+        pass
+
 # --- ЗАПУСК (RENDER) ---
 async def on_startup(bot: Bot):
-    # drop_pending_updates=True очищает всю очередь старых сообщений, чтобы бот не спамил
     await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
 
 async def on_shutdown(bot: Bot):
@@ -183,7 +189,6 @@ async def on_shutdown(bot: Bot):
 
 def main():
     app = web.Application()
-    # handle_in_background=True заставляет бота мгновенно отвечать Телеграму и не спамить
     webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot, handle_in_background=True)
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
