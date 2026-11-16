@@ -44,7 +44,6 @@ class MemeGen(StatesGroup):
     waiting_for_prompt = State()
 
 async def download_font():
-    """Скачиваем шрифт Lobster при запуске"""
     font_url = "https://github.com/google/fonts/raw/main/ofl/lobster/Lobster-Regular.ttf"
     if not os.path.exists("Lobster-Regular.ttf"):
         try:
@@ -56,7 +55,18 @@ async def download_font():
         except Exception as e:
             print(f"Не удалось скачать шрифт: {e}")
 
+def get_font(size):
+    # Пытаемся взять Lobster, если нет - DejaVu
+    try:
+        return ImageFont.truetype("Lobster-Regular.ttf", size)
+    except:
+        try:
+            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
+        except:
+            return ImageFont.load_default()
+
 async def show_location_menu(message: Message, state: FSMContext):
+    await state.clear() # Сбрасываем старые таймеры
     builder = InlineKeyboardBuilder()
     builder.button(text="🏠 Дома", callback_data="loc_дома")
     builder.button(text="🌲 В лесу", callback_data="loc_в лесу")
@@ -109,41 +119,69 @@ async def proceed_generation(message: Message, prompt_text: str, state: FSMConte
     english_prompt = LOCAL_DICT.get(prompt_text, prompt_text)
     msg = await message.answer(f"⏳ Ща нарисую: {english_prompt}...")
     
-    # ЛОУ-КВАЛИТИ ПРОМПТ
     full_prompt = f"A horse, {english_prompt}, low quality, blurry, shitpost, 360p, bad composition, funny"
-    await generate_and_send(message, full_prompt, msg, prompt_text)
+    await generate_and_send(message, full_prompt, msg, prompt_text, state)
 
 async def fetch_image_from_apis(prompt: str):
     headers = {"User-Agent": "Mozilla/5.0"}
+    
+    # 1. Pollinations
     try:
         url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(1, 999999)}"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200: return await resp.read()
     except Exception: pass
+
+    # 2. Airforce (Резерв)
+    try:
+        url = f"https://api.airforce/imagine?prompt={urllib.parse.quote(prompt)}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200: return await resp.read()
+    except Exception: pass
+
     return None
 
-async def generate_and_send(message: Message, full_prompt: str, status_msg: Message, original_prompt: str):
+async def generate_and_send(message: Message, full_prompt: str, status_msg: Message, original_prompt: str, state: FSMContext):
     image_bytes = await fetch_image_from_apis(full_prompt)
+    
     if not image_bytes:
-        await status_msg.edit_text("❌ Нейронка сдохла.")
+        img = Image.new('RGB', (1024, 1024), color='black')
+        draw = ImageDraw.Draw(img)
+        font = get_font(80)
+        
+        caption = "НЕЙРОНКА СДОХЛА"
+        bbox = draw.textbbox((0, 0), caption, font=font)
+        x = (img.width - (bbox[2] - bbox[0])) / 2
+        y = (img.height - (bbox[3] - bbox[1])) / 2
+        draw.text((x, y), caption, font=font, fill="red")
+        
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=90)
+        output.seek(0)
+        photo = BufferedInputFile(output.read(), filename="fail.jpg")
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Попробовать снова (10с)", callback_data="retry_gen")
+        
+        fail_msg = await message.answer_photo(photo, caption="Сервера легли. Жди 10 секунд.", reply_markup=builder.as_markup())
+        await status_msg.delete()
+        
+        retry_time = datetime.now() + timedelta(seconds=10)
+        await state.update_data(retry_at=retry_time.timestamp())
+        asyncio.create_task(update_timer(fail_msg.message_id, message.chat.id))
         return
 
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img = img.crop((0, 0, img.width, img.height - 30))
         draw = ImageDraw.Draw(img)
+        font = get_font(70)
         
-        # ШРИФТ LOBSTER
-        try: font = ImageFont.truetype("Lobster-Regular.ttf", 70)
-        except: font = ImageFont.load_default()
-        
-        # ЛОГИКА ПОДПИСЕЙ
         if original_prompt == "конь чистит картошку":
-            if random.random() < 0.6:
-                caption = "золотая картошка"
-            else:
-                caption = await get_tomba_comment(full_prompt)
+            if random.random() < 0.6: caption = "золотая картошка"
+            else: caption = await get_tomba_comment(full_prompt)
         elif original_prompt in ["в лесу", "на траве", "на травке", "на поляне"]:
             roll = random.random()
             if roll < 0.45: caption = "спайс"
@@ -162,7 +200,7 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         draw.text((x, y), caption, font=font, fill="white")
         
         output = io.BytesIO()
-        img.save(output, format="JPEG", quality=70) # Чуть сжал качество для шакальности
+        img.save(output, format="JPEG", quality=70)
         output.seek(0)
         
         photo = BufferedInputFile(output.read(), filename="horse_meme.jpg")
@@ -172,7 +210,32 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         await message.answer_photo(photo, reply_markup=builder.as_markup())
         await status_msg.delete()
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
+        await status_msg.edit_text(f"❌ Ошибка обработки: {e}")
+
+async def update_timer(message_id: int, chat_id: int):
+    for seconds_left in range(9, 0, -1):
+        await asyncio.sleep(1)
+        builder = InlineKeyboardBuilder()
+        builder.button(text=f"🔄 Попробовать снова ({seconds_left}с)", callback_data="retry_gen")
+        try:
+            await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=builder.as_markup())
+        except: pass
+
+@dp.callback_query(F.data == "retry_gen")
+async def retry_generation(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    retry_at = data.get('retry_at', 0)
+    remaining = int(retry_at - datetime.now().timestamp())
+    
+    if remaining > 0:
+        await callback.answer()
+        await callback.message.answer(f"ПОДОЖДИ ПИДОРАС, НЕЙРОНКИ ЛЕЖАТ, ОТДЫХАЮТ. ВОЗВРАЩАЙСЯ ЧЕРЕЗ {remaining} СЕКУНД.")
+        return
+        
+    await callback.answer()
+    # Удаляем сообщение с черным квадратом и отправляем меню заново
+    await callback.message.delete()
+    await show_location_menu(callback.message, state)
 
 async def get_tomba_comment(user_prompt: str) -> str:
     if not OPENROUTER_API_KEY: return random.choice(RANDOM_CAPTIONS)
@@ -186,7 +249,6 @@ async def get_tomba_comment(user_prompt: str) -> str:
                 return random.choice(RANDOM_CAPTIONS)
     except: return random.choice(RANDOM_CAPTIONS)
 
-# --- WEBHOOK ---
 async def on_startup(bot: Bot):
     await download_font()
     await bot.delete_webhook(drop_pending_updates=True)
