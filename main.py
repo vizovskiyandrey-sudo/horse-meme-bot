@@ -27,15 +27,29 @@ dp = Dispatcher()
 TOMBA_PROMPT = """Ты — злой, агрессивный персонаж Тумба Юмба. Общайся матом, коротко (до 15 слов)."""
 
 LOCAL_DICT = {
-    "дома": "at home in a cozy room", "в лесу": "in a dark pine forest", "на пляже": "on a sunny beach",
-    "на траве": "on green grass", "на травке": "on green grass", "на поляне": "in a forest clearing",
-    "в космосе": "in deep space", "на трамвае": "riding a vintage tram", "в машине": "inside a car",
-    "в горах": "in the mountains", "в снегу": "in the snow", "в аду": "in hell with fire",
-    "в офисе": "in a corporate office", "на луне": "on the moon", "в подвале": "in a dark basement",
-    "на крыше": "on a rooftop", "в стиральной машине": "inside a washing machine",
-    "на совещании": "at a business meeting wearing a suit", "в матрице": "inside the Matrix, green neon code",
-    "на танке": "riding a military tank", "в туалете": "sitting on a toilet",
-    "конь чистит картошку": "a horse peeling potatoes", "золотая картошка": "a giant golden potato"
+    "дома": "at home in a cozy room", 
+    "в лесу": "in a dark pine forest", 
+    "на пляже": "on a sunny beach",
+    "на траве": "on green grass", 
+    "на травке": "on green grass", 
+    "на поляне": "in a forest clearing",
+    "в космосе": "in deep space", 
+    "на трамвае": "riding a vintage tram", 
+    "в машине": "inside a car",
+    "в горах": "in the mountains", 
+    "в снегу": "in the snow", 
+    "в аду": "in hell with fire",
+    "в офисе": "in a corporate office", 
+    "на луне": "on the moon", 
+    "в подвале": "in a dark basement",
+    "на крыше": "on a rooftop", 
+    "в стиральной машине": "inside a washing machine",
+    "на совещании": "at a business meeting wearing a suit", 
+    "в матрице": "inside the Matrix, green neon code",
+    "на танке": "riding a military tank", 
+    "в туалете": "sitting on a toilet",
+    "конь чистит картошку": "a horse peeling potatoes", 
+    "золотая картошка": "a giant golden potato"
 }
 
 RANDOM_CAPTIONS = ["нахуя", "сидит", "эчпочмак", "мда", "постирония", "бля", "конь в пальто", "охуеть", "лошара", "пиздец"]
@@ -43,30 +57,14 @@ RANDOM_CAPTIONS = ["нахуя", "сидит", "эчпочмак", "мда", "п
 class MemeGen(StatesGroup):
     waiting_for_prompt = State()
 
-async def download_font():
-    font_url = "https://github.com/google/fonts/raw/main/ofl/lobster/Lobster-Regular.ttf"
-    if not os.path.exists("Lobster-Regular.ttf"):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(font_url) as resp:
-                    if resp.status == 200:
-                        with open("Lobster-Regular.ttf", 'wb') as f:
-                            f.write(await resp.read())
-        except Exception as e:
-            print(f"Не удалось скачать шрифт: {e}")
-
 def get_font(size):
-    # Пытаемся взять Lobster, если нет - DejaVu
-    try:
-        return ImageFont.truetype("Lobster-Regular.ttf", size)
+    try: return ImageFont.truetype("Lobster-Regular.ttf", size)
     except:
-        try:
-            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
-        except:
-            return ImageFont.load_default()
+        try: return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
+        except: return ImageFont.load_default()
 
 async def show_location_menu(message: Message, state: FSMContext):
-    await state.clear() # Сбрасываем старые таймеры
+    await state.clear()
     builder = InlineKeyboardBuilder()
     builder.button(text="🏠 Дома", callback_data="loc_дома")
     builder.button(text="🌲 В лесу", callback_data="loc_в лесу")
@@ -119,25 +117,43 @@ async def proceed_generation(message: Message, prompt_text: str, state: FSMConte
     english_prompt = LOCAL_DICT.get(prompt_text, prompt_text)
     msg = await message.answer(f"⏳ Ща нарисую: {english_prompt}...")
     
+    # ЛОУ-КВАЛИТИ ПРОМПТ ДЛЯ КОНЯ
     full_prompt = f"A horse, {english_prompt}, low quality, blurry, shitpost, 360p, bad composition, funny"
     await generate_and_send(message, full_prompt, msg, prompt_text, state)
 
+# --- КАСКАД ИЗ 4 СЕРВЕРОВ ---
 async def fetch_image_from_apis(prompt: str):
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 1. Pollinations
+    # 1. Pollinations (Flux)
     try:
         url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(1, 999999)}"
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200: return await resp.read()
     except Exception: pass
 
-    # 2. Airforce (Резерв)
+    # 2. Pollinations (Turbo - другая модель)
+    try:
+        url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true&model=turbo&seed={random.randint(1, 999999)}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200: return await resp.read()
+    except Exception: pass
+
+    # 3. Airforce
     try:
         url = f"https://api.airforce/imagine?prompt={urllib.parse.quote(prompt)}"
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             async with session.get(url, headers=headers) as resp:
+                if resp.status == 200: return await resp.read()
+    except Exception: pass
+
+    # 4. Hugging Face (SDXL)
+    try:
+        api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.post(api_url, json={"inputs": prompt}, headers=headers) as resp:
                 if resp.status == 200: return await resp.read()
     except Exception: pass
 
@@ -163,12 +179,12 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         photo = BufferedInputFile(output.read(), filename="fail.jpg")
         
         builder = InlineKeyboardBuilder()
-        builder.button(text="🔄 Попробовать снова (10с)", callback_data="retry_gen")
+        builder.button(text="🔄 Попробовать снова (15с)", callback_data="retry_gen")
         
-        fail_msg = await message.answer_photo(photo, caption="Сервера легли. Жди 10 секунд.", reply_markup=builder.as_markup())
+        fail_msg = await message.answer_photo(photo, caption="Все 4 сервера легли. Жди 15 секунд.", reply_markup=builder.as_markup())
         await status_msg.delete()
         
-        retry_time = datetime.now() + timedelta(seconds=10)
+        retry_time = datetime.now() + timedelta(seconds=15)
         await state.update_data(retry_at=retry_time.timestamp())
         asyncio.create_task(update_timer(fail_msg.message_id, message.chat.id))
         return
@@ -179,6 +195,7 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         draw = ImageDraw.Draw(img)
         font = get_font(70)
         
+        # ЛОГИКА ПОДПИСЕЙ ДЛЯ КОНЯ
         if original_prompt == "конь чистит картошку":
             if random.random() < 0.6: caption = "золотая картошка"
             else: caption = await get_tomba_comment(full_prompt)
@@ -213,7 +230,7 @@ async def generate_and_send(message: Message, full_prompt: str, status_msg: Mess
         await status_msg.edit_text(f"❌ Ошибка обработки: {e}")
 
 async def update_timer(message_id: int, chat_id: int):
-    for seconds_left in range(9, 0, -1):
+    for seconds_left in range(14, 0, -1): # 15 секунд
         await asyncio.sleep(1)
         builder = InlineKeyboardBuilder()
         builder.button(text=f"🔄 Попробовать снова ({seconds_left}с)", callback_data="retry_gen")
@@ -233,7 +250,6 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         return
         
     await callback.answer()
-    # Удаляем сообщение с черным квадратом и отправляем меню заново
     await callback.message.delete()
     await show_location_menu(callback.message, state)
 
@@ -250,7 +266,6 @@ async def get_tomba_comment(user_prompt: str) -> str:
     except: return random.choice(RANDOM_CAPTIONS)
 
 async def on_startup(bot: Bot):
-    await download_font()
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(WEBHOOK_URL)
 
